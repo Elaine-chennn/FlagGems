@@ -15,12 +15,12 @@
 import pytest
 import torch
 
-from flag_gems.ops._native_batch_norm_legit import (
-    _native_batch_norm_legit,
-    _native_batch_norm_legit_no_stats,
-    _native_batch_norm_legit_no_stats_out,
-    _native_batch_norm_legit_out,
-)
+import flag_gems
+
+_native_batch_norm_legit = flag_gems._native_batch_norm_legit
+_native_batch_norm_legit_no_stats = flag_gems._native_batch_norm_legit_no_stats
+_native_batch_norm_legit_no_stats_out = flag_gems._native_batch_norm_legit_no_stats_out
+_native_batch_norm_legit_out = flag_gems._native_batch_norm_legit_out
 
 from . import base, consts
 
@@ -62,13 +62,12 @@ def _no_stats_input_fn(shape, dtype, device):
 def _out_input_fn(shape, dtype, device):
     inp, weight, bias = _make_common_inputs(shape, dtype, device)
     channels = shape[1]
-    stats_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
     running_mean = torch.zeros(channels, dtype=dtype, device=device)
     running_var = torch.ones(channels, dtype=dtype, device=device)
     outputs = {
         "out": torch.empty_like(inp),
-        "save_mean": torch.empty(channels, dtype=stats_dtype, device=device),
-        "save_invstd": torch.empty(channels, dtype=stats_dtype, device=device),
+        "save_mean": torch.empty(channels, dtype=dtype, device=device),
+        "save_invstd": torch.empty(channels, dtype=dtype, device=device),
     }
     yield inp, weight, bias, running_mean, running_var, True, 0.1, 1e-5, outputs
 
@@ -76,11 +75,10 @@ def _out_input_fn(shape, dtype, device):
 def _no_stats_out_input_fn(shape, dtype, device):
     inp, weight, bias = _make_common_inputs(shape, dtype, device)
     channels = shape[1]
-    stats_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
     outputs = {
         "out": torch.empty_like(inp),
-        "save_mean": torch.empty(channels, dtype=stats_dtype, device=device),
-        "save_invstd": torch.empty(channels, dtype=stats_dtype, device=device),
+        "save_mean": torch.empty(channels, dtype=dtype, device=device),
+        "save_invstd": torch.empty(channels, dtype=dtype, device=device),
     }
     yield inp, weight, bias, True, 0.1, 1e-5, outputs
 

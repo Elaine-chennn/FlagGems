@@ -16,24 +16,9 @@ import logging
 
 import torch
 
-from flag_gems.runtime import torch_device_fn
-
-from ._batch_norm_no_update import (
-    BNNU_MAX_PROGRAMS,
-    BNNU_TILE_S,
-    _batch_norm_no_update_kernel,
-)
+from ._batch_norm_no_update import _batch_norm_no_update
 
 logger = logging.getLogger(__name__)
-
-
-def make_3d_for_bn(input):
-    """View the input as [N, C, S] for batch normalization."""
-    if input.ndim == 2:
-        input = input.unsqueeze(-1)
-    elif input.ndim >= 4:
-        input = input.flatten(2, -1)
-    return input
 
 
 def _native_batch_norm_legit_no_training(
@@ -47,12 +32,10 @@ def _native_batch_norm_legit_no_training(
 ):
     """Kunlunxin/XPU inference-only batch normalization using running stats.
 
-    Mirrors ``torch.ops.aten._native_batch_norm_legit_no_training``. The generic
-    implementation's 2D-tile kernel (grid = feat_dim, [BLOCK_M, BLOCK_N] 2D loops)
-    does not lower on the XPU compiler for most shapes (SramCode/``TritonXPULegalize``
-    pass failures). This override maps one program to each contiguous (n, c) slice
-    (grid = N*C, the same pattern as the batch_norm inference path), so each slice
-    is a contiguous block-DMA run sharing ONE channel's stats/affine scalars.
+    Mirrors ``torch.ops.aten._native_batch_norm_legit_no_training``. Delegates to
+    the vendor _batch_norm_no_update, which uses the n_batch_groups fused kernel
+    (grid = C*ceil(N/NB)) for small-spatial shapes — substantially faster than the
+    old per-slice (grid = N*C) path on launch-bound shapes.
     Returns (output, save_mean, save_var) where save_mean/save_var are EMPTY
     (shape (0,)) since no batch statistics are computed in this mode.
     """
@@ -64,43 +47,15 @@ def _native_batch_norm_legit_no_training(
             "_native_batch_norm_legit_no_training"
         )
 
-    input_3d = make_3d_for_bn(input)
-    if not input_3d.is_contiguous():
-        input_3d = input_3d.contiguous()
-    _, feat_dim, spatial_dim = input_3d.shape
-    n_slices = input_3d.shape[0] * feat_dim
-
-    if running_mean.numel() != feat_dim or running_var.numel() != feat_dim:
-        raise RuntimeError("running statistics must contain one value per channel")
-
-    output = torch.empty_like(input_3d)
-    if n_slices > 0:
-        input_flat = input_3d.reshape(-1)
-        output_flat = output.reshape(-1)
-        has_weight = weight is not None
-        has_bias = bias is not None
-        with torch_device_fn.device(input.device):
-            for slice_offset in range(0, n_slices, BNNU_MAX_PROGRAMS):
-                slice_count = min(BNNU_MAX_PROGRAMS, n_slices - slice_offset)
-                _batch_norm_no_update_kernel[(slice_count,)](
-                    input_flat[slice_offset * spatial_dim :],
-                    weight if has_weight else input_flat,
-                    bias if has_bias else input_flat,
-                    running_mean,
-                    running_var,
-                    output_flat[slice_offset * spatial_dim :],
-                    feat_dim,
-                    spatial_dim,
-                    eps,
-                    HAS_WEIGHT=has_weight,
-                    HAS_BIAS=has_bias,
-                    TILE_S=BNNU_TILE_S,
-                    NEED_MASK=(spatial_dim % BNNU_TILE_S) != 0,
-                    num_warps=4,
-                    isCloseVectorization=True,
-                    buffer_size_limit=2048,
-                )
-
-    save_mean = torch.empty((0,), dtype=input.dtype, device=input.device)
-    save_var = torch.empty((0,), dtype=input.dtype, device=input.device)
-    return output.view_as(input), save_mean, save_var
+    # _batch_norm_no_update returns (output, save_mean, save_var, reserved);
+    # aten::_native_batch_norm_legit_no_training expects (output, save_mean, save_var).
+    output, save_mean, save_var, _reserved = _batch_norm_no_update(
+        input,
+        weight=weight,
+        bias=bias,
+        running_mean=running_mean,
+        running_var=running_var,
+        momentum=momentum,
+        eps=eps,
+    )
+    return output, save_mean, save_var
