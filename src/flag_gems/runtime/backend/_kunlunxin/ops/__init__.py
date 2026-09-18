@@ -55,7 +55,7 @@ from .addcdiv import addcdiv, addcdiv_, addcdiv_out
 from .addcmul import addcmul, addcmul_, addcmul_out
 from .addmm import addmm, addmm_dtype, addmm_dtype_out, addmm_out  # noqa: F401
 from .addmm_ import addmm_
-from .addmv import addmv, addmv_out
+from .addmv import addmv, addmv_, addmv_out
 from .addr import addr
 from .affine_grid_generator import affine_grid_generator  # noqa: F401
 from .alias_copy import alias_copy, alias_copy_out
@@ -649,6 +649,7 @@ __all__ = [
     "addmm_",
     "addmm_out",
     "addmv",
+    "addmv_",
     "addmv_out",
     "addr",
     "alias_copy",
