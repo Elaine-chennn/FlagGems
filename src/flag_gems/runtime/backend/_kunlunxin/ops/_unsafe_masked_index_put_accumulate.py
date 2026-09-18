@@ -471,7 +471,10 @@ def _unsafe_masked_index_put_accumulate_multi_round(
             src = out
             # 唯一的 device->host 同步：只在一批 rounds 结束后读一次 alive。
             # 典型输入（最大重数 <= 8）一次就退出，不产生第二次同步。
-            if int(alive.sum().item()) == 0:
+            # 归约必须在 host 侧做：本后端的 gems 设备端 `sum`（use_gems 下
+            # `alive.sum()` 会被派发到它）在小张量上会非法访问（error 700）并
+            # wedge 整卡；`.cpu()` 只是 D2H 拷贝、随后在 CPU 上求和，规避该缺陷。
+            if int(alive.cpu().sum()) == 0:
                 break
         else:
             raise RuntimeError(
