@@ -23,6 +23,7 @@ from flag_gems.utils import broadcastable_to, libentry
 from flag_gems.utils import triton_lang_extension as ext
 
 from ..utils.pointwise_dynamic import pointwise_dynamic
+from .addmm import addmm_out
 from .mv import mv
 
 logger = logging.getLogger(__name__)
@@ -66,9 +67,15 @@ def _addmv_combine_kernel(mv_res, bias, alpha, beta):
 # [1024,65536] fp16 mv ~0.29ms native vs ~1.63ms upcast). The accuracy tests only
 # use reduction dim M<=1024 (triton path), so the delegate branch is never
 # accuracy-checked; the affine bias combine is still done in fp32 for safety.
-# Threshold 2048: triton tile [BLOCK_N,>=2048] already degrades (probe: [2048,2048]
-# triton ~0.16 vs native_mv ~0.29 speedup), so hand large reduction dims to mv.
-_MV_DELEGATE_M = 2048
+# Threshold 256: above this reduction dim the flat triton matvec tile starts
+# losing to the vendor mm fast path. For the common contiguous bias
+# (self.shape == (N,)) we go one step further and delegate the *whole* affine op
+# to addmm_out -- treating the matvec as an (N,M)x(M,1) mm and the bias as the
+# (N,1) additive term -- so the fp32-accumulate vendor mm does
+# beta*bias + alpha*(mat@vec) in a single fused launch (no separate mv kernel +
+# combine kernel). Non-contiguous / broadcast bias still routes through the
+# native-dtype mv + fused combine path below.
+_MV_DELEGATE_M = 256
 
 
 def heur_block_n(args):
@@ -140,6 +147,24 @@ def addmv_kernel(
     tl.store(Out_ptrs, out_block, mask=n_mask)
 
 
+def _addmv_addmm(self, mat, vec, beta, alpha, out, N, M):
+    # Contiguous-bias fast path: fold the whole affine matvec into one addmm_out.
+    # (N,M) @ (M,1) is the matvec; self viewed as (N,1) is the additive bias, so
+    # addmm computes beta*bias + alpha*(mat@vec) with a single fp32-accumulate
+    # vendor mm launch -- no separate mv kernel + combine kernel, no re-dispatch
+    # through the gems elementwise library. Views are zero-copy (self/out are
+    # contiguous (N,) here). Result reshapes back to (N,).
+    addmm_out(
+        self.view(N, 1),
+        mat,
+        vec.view(M, 1),
+        beta=beta,
+        alpha=alpha,
+        out=out.view(N, 1),
+    )
+    return out
+
+
 def _addmv_mv(self, mat, vec, beta, alpha, out, N):
     # Large-shape path: native-dtype vendor-mm matvec + a single fused affine
     # combine kernel. The matvec stays in mat.dtype so fp16/bf16 use the vendor
@@ -185,6 +210,13 @@ def _addmv_impl(self, mat, vec, beta, alpha, out):
         assert out.shape == (N,), "Incompatible output shape"
 
     if M >= _MV_DELEGATE_M:
+        if (
+            beta != 0
+            and tuple(self.shape) == (N,)
+            and self.is_contiguous()
+            and out.is_contiguous()
+        ):
+            return _addmv_addmm(self, mat, vec, beta, alpha, out, N, M)
         return _addmv_mv(self, mat, vec, beta, alpha, out, N)
     return _addmv_triton(self, mat, vec, beta, alpha, out, N, M)
 
@@ -197,3 +229,8 @@ def addmv(self, mat, vec, *, beta=1, alpha=1):
 def addmv_out(self, mat, vec, *, beta=1, alpha=1, out=None):
     logger.debug("GEMS_KUNLUNXIN ADDMV_OUT")
     return _addmv_impl(self, mat, vec, beta, alpha, out)
+
+
+def addmv_(self, mat, vec, *, beta=1, alpha=1):
+    logger.debug("GEMS_KUNLUNXIN ADDMV_")
+    return _addmv_impl(self, mat, vec, beta, alpha, self)

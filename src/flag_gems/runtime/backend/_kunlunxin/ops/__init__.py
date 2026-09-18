@@ -55,7 +55,7 @@ from .addcdiv import addcdiv, addcdiv_, addcdiv_out
 from .addcmul import addcmul, addcmul_, addcmul_out
 from .addmm import addmm, addmm_dtype, addmm_dtype_out, addmm_out  # noqa: F401
 from .addmm_ import addmm_
-from .addmv import addmv, addmv_out
+from .addmv import addmv, addmv_, addmv_out
 from .addr import addr
 from .affine_grid_generator import affine_grid_generator  # noqa: F401
 from .alias_copy import alias_copy, alias_copy_out
@@ -177,6 +177,7 @@ from .diag import diag
 from .diag_embed import diag_embed
 from .diagonal import diagonal_backward
 from .diagonal_copy import diagonal_copy
+from .diagonal_scatter import diagonal_scatter
 from .diff import diff
 from .digamma import digamma
 from .digamma_ import digamma_
@@ -525,6 +526,7 @@ from .special_modified_bessel_k0 import (
     special_modified_bessel_k0_out,
 )
 from .special_multigammaln import special_multigammaln
+from .special_ndtr import special_ndtr
 from .special_ndtri import special_ndtri
 from .special_shifted_chebyshev_polynomial_t import (
     special_shifted_chebyshev_polynomial_t,
@@ -647,6 +649,7 @@ __all__ = [
     "addmm_",
     "addmm_out",
     "addmv",
+    "addmv_",
     "addmv_out",
     "addr",
     "alias_copy",
@@ -778,6 +781,7 @@ __all__ = [
     "diag_embed",
     "diagonal_backward",
     "diagonal_copy",
+    "diagonal_scatter",
     "diff",
     "digamma",
     "digamma_",
@@ -1225,6 +1229,7 @@ __all__ = [
     "special_modified_bessel_k0",
     "special_modified_bessel_k0_out",
     "special_multigammaln",
+    "special_ndtr",
     "special_ndtri",
     "special_shifted_chebyshev_polynomial_t",
     "special_shifted_chebyshev_polynomial_u",
