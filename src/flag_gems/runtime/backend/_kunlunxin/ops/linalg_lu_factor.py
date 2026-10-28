@@ -231,14 +231,14 @@ def _lu_scale_column_kernel(
         )
 
 
-@triton.jit(do_not_specialize=["J"])
+@triton.jit(do_not_specialize=["J", "ROWS", "BLOCKS"])
 def _lu_update_trailing_kernel(
     LU,
     M,
     N,
     J,
-    ROWS: tl.constexpr,
-    BLOCKS: tl.constexpr,
+    ROWS,
+    BLOCKS,
     BLOCK_N: tl.constexpr,
 ):
     pid = tl.program_id(0)
@@ -482,8 +482,18 @@ def _linalg_lu_factor(input, pivot):
                         lu_desc, l_desc, u_desc, j, m, n, rb, cb, 64, 128
                     )
                 else:
-                    trailing_rows = m
-                    trailing_blocks = triton.cdiv(n, 128)
+                    # Size the grid to the work that is actually left at this
+                    # step (same bookkeeping the tle branch above already
+                    # does).  A full-matrix grid spawns batch*M*ceil(N/BLOCK_N)
+                    # programs at every step, and the ones past the trailing
+                    # submatrix all collapse onto element (0,0) -- safe_row and
+                    # safe_cols clamp them there -- so they still issue a
+                    # load/store pair against one address.  ROWS and BLOCKS are
+                    # runtime arguments (they only feed integer div/mod on the
+                    # pid, never a tl.arange extent), so shrinking them per
+                    # step costs no recompilation.
+                    trailing_rows = m - j - 1
+                    trailing_blocks = triton.cdiv(n - j - 1, 128)
                     _lu_update_trailing_kernel[
                         (batch * trailing_rows * trailing_blocks,)
                     ](
